@@ -1,0 +1,224 @@
+---
+title: "DengAI_EDA"
+author: "Kew Jing Sheng"
+date: "5/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pkgs <- c('tidyverse', 'corrplot', 'magrittr', 'zoo', 'RColorBrewer', 'gridExtra','MASS')
+invisible(lapply(pkgs, require, character.only = T))
+```
+
+## Import Data
+
+```{r import data}
+train_features <- read.csv('./data/dengue_features_train.csv')
+train_labels <- read.csv('./data/dengue_labels_train.csv')
+test_features <- read.csv('./data/dengue_features_test.csv')
+
+train_cleaned <- read.csv('./data/Train_cleaned.csv')
+test_cleaned <- read.csv('./data/Test_cleaned.csv')
+```
+
+### Read data (Train)
+```{r split into sj & iq}
+sj_train_features = train_features %>% filter(city == 'sj')
+sj_train_labels   = train_labels   %>% filter(city == 'sj')
+iq_train_features = train_features %>% filter(city == 'iq')
+iq_train_labels   = train_labels   %>% filter(city == 'iq')
+
+sj_clean_train = train_cleaned %>% filter(city == 'sj')
+sj_clean_train[['week_start_date']] <- as.POSIXct(sj_clean_train[['week_start_date']],
+                                                  format = "%Y-%m-%d")
+iq_clean_train = train_cleaned %>% filter(city == 'iq')
+iq_clean_train[['week_start_date']] <- as.POSIXct(iq_clean_train[['week_start_date']],
+                                                  format = "%Y-%m-%d")
+```
+
+```{r sj missing values visualization}
+apply(sj_train_features, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+sj_train_features  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+
+apply(sj_clean_train, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+sj_clean_train  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+```
+
+```{r iq missing values visualization}
+apply(iq_train_features, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+iq_train_features  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+
+apply(iq_clean_train, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+iq_clean_train  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+```
+
+
+```{r data shape for each city}
+cat('\nSan Juan\n',
+    '\t features: ', sj_train_features %>% ncol, 
+    '\t entries: ' , sj_train_features %>% nrow,
+    '\t labels: '  , sj_train_labels %>% nrow)
+
+cat('\nIquitos\n',
+    '\t features: ', iq_train_features %>% ncol, 
+    '\t entries: ' , iq_train_features %>% nrow,
+    '\t labels: '  , iq_train_labels %>% nrow)
+```
+
+```{r}
+cat('\nSan Juan\n',
+    '\t total cases mean: ',      sj_train_labels$total_cases %>% mean(), 
+    '\t total cases variance: ' , sj_train_labels$total_cases %>% var() )
+
+cat('\nIquitos\n',
+    '\t total cases mean: ',      iq_train_labels$total_cases %>% mean(), 
+    '\t total cases variance: ' , iq_train_labels$total_cases %>% var() )
+```
+
+```{r}
+train_cleaned %>% ggplot() + 
+  geom_boxplot(aes(year, total_cases, group=year)) + 
+  facet_grid(city ~ ., scale = "free") + 
+  ggtitle("Total number of cases per year in each cities")
+```
+
+```{r}
+ggplot(sj_clean_train, aes(x = total_cases)) +
+  theme_bw() +
+  ggtitle('Cases of dengue in San Juan') +
+  geom_histogram(bins=30) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(iq_clean_train, aes(x = total_cases)) +
+  theme_bw() +
+  ggtitle('Cases of dengue in Iquitos') +
+  geom_histogram(bins=30) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+rbind(iq_train_labels, sj_train_labels) %>% 
+  ggplot(aes(x = total_cases,fill = ..count..)) + 
+  geom_histogram(bins = 12, colour = 'black') + ggtitle('Total Cases of Dengue') +
+  scale_y_continuous(breaks = seq(0,700,100)) + facet_wrap(~city)
+```
+
+```{r sj correlation analysis}
+
+sj_clean_train %>% 
+  dplyr::select(-city, -year, -weekofyear, -week_start_date) %>%
+  cor(use = 'pairwise.complete.obs') -> M1
+
+corrplot(M1, type="lower", method="color",
+           col=brewer.pal(n=8, name="RdBu"),diag=FALSE)
+```
+
+
+```{r iq correlation analysis}
+
+iq_clean_train %>% 
+  dplyr::select(-city, -year, -weekofyear, -week_start_date) %>%
+  cor(use = 'pairwise.complete.obs') -> M2
+
+corrplot(M2, type="lower", method="color",
+           col=brewer.pal(n=8, name="RdBu"),diag=FALSE)
+```
+
+```{r}
+sort(M1[21,-21]) %>%  
+  as.data.frame %>% 
+  `names<-`('correlation') %>%
+  ggplot(aes(x = reorder(row.names(.), -correlation), y = correlation, fill = correlation)) + 
+  geom_bar(stat='identity', colour = 'black') + scale_fill_continuous(guide = FALSE) + scale_y_continuous(limits =  c(-.15,.25)) +
+  labs(title = 'San Jose\n Correlations', x = NULL, y = NULL) + coord_flip() -> cor1
+
+# can use ncol(M1) instead of 21 to generalize the code
+sort(M2[21,-21]) %>%  
+  as.data.frame %>% 
+  `names<-`('correlation') %>%
+  ggplot(aes(x = reorder(row.names(.), -correlation), y = correlation, fill = correlation)) + 
+  geom_bar(stat='identity', colour = 'black') + scale_fill_continuous(guide = FALSE) + scale_y_continuous(limits =  c(-.15,.25)) +
+  labs(title = 'Iquitos\n Correlations', x = NULL, y = NULL) + coord_flip() -> cor2
+
+grid.arrange(cor1, cor2, nrow = 1)
+```
+
+```{r}
+names(sj_clean_train)
+```
+
+
+```{r}
+ggplot()+
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, reanalysis_specific_humidity_g_per_kg), color='blue') + 
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, total_cases), color='red') + 
+  ggtitle("Reanalysis_Specific_Humidity_g_per_kg vs Total_Cases over Time")
+```
+```{r}
+ggplot()+
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, reanalysis_dew_point_temp_k), color='blue') + 
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, total_cases), color='red') + 
+  ggtitle("Reanalysis_Specific_Humidity_g_per_kg vs Total_Cases over Time")
+```
+
+
+
+```{r}
+ggplot()+
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, reanalysis_tdtr_k), color='blue') + 
+  geom_line(data=sj_clean_train, mapping=aes(week_start_date, total_cases), color='red') + 
+  ggtitle("Reanalysis_Specific_Humidity_g_per_kg vs Total_Cases over Time")
+```
+```{r}
+ggplot(data = sj_clean_train, aes(x=total_cases, y=reanalysis_tdtr_k, fill=total_cases)) + 
+  geom_boxplot()+
+  scale_fill_brewer(palette="Green") + 
+  geom_jitter(shape=16, position=position_jitter(0.2))+
+  labs(title = 'Did reanalysis_tdtr_k difference across total_cases?',
+       y='total_cases', x='total_cases')+
+  facet_wrap(~weekofyear,nrow = 1)
+```

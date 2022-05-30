@@ -1,0 +1,279 @@
+---
+title: "Classification Dengue Outbreak"
+output: html_document
+date: '2022-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caret)
+library(tidyverse)
+library(randomForest)
+library(mlbench)
+library(e1071)
+
+df <- read.table("Train_cleaned modified.csv",sep=",",,header = TRUE )
+glimpse(df)
+
+```
+Delete the Variable used to determine the occurrence of outbreak.
+```{r}
+
+df = subset(df, select = -c(`X4wkly.average`,`X2SD.4wkly.Avg`,`Avg.of.3.4wkly.mean`,`Avg.of.3.4wkly.mean.2sd.of.4wkly.mean`) )
+```
+
+
+Split the data according to the city
+```{r}
+iq_df<- df[which(df$city=="iq"),]
+sj_df<- df[which(df$city=="sj"),]
+```
+
+
+Delete the unrelated variable for prediction for both data of each city.
+```{r}
+iq_df<-iq_df[-c(1:6),]
+iq_df<-subset(iq_df,select = -c(1,2,3,4))
+glimpse(iq_df)
+
+```
+
+
+```{r}
+sj_df<-sj_df[-c(1:6),]
+sj_df<-subset(sj_df,select = -c(1,2,3,4))
+glimpse(sj_df)
+
+```
+
+Prepare training and testing set for the model to predict.
+```{r}
+# To achieve reproducible model; set the random seed number
+set.seed(101)
+
+# Performs stratified random split of the data set
+iq_TrainingIndex <- createDataPartition(iq_df$Outbreak, p=0.8, list = FALSE)
+iq_TrainingSet <- iq_df[iq_TrainingIndex,] # Training Set
+iq_TestingSet <- iq_df[-iq_TrainingIndex,] # Test Set
+
+sj_TrainingIndex <- createDataPartition(sj_df$Outbreak, p=0.8, list = FALSE)
+sj_TrainingSet <- sj_df[sj_TrainingIndex,] # Training Set
+sj_TestingSet <- sj_df[-sj_TrainingIndex,] # Test Set
+ 
+```
+
+
+
+
+```{r}
+###############################
+# SVM model (polynomial kernel)for Iquitos
+
+
+iq_TrainingSet$Outbreak<- factor(iq_TrainingSet$Outbreak)  ### must do this to prevent error
+iq_TestingSet$Outbreak<- factor(iq_TestingSet$Outbreak)
+
+
+# Build CV model
+iq_Model <- train(Outbreak ~ ., data = iq_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+iq_Model
+
+
+
+
+
+# Apply model for prediction
+iq_Model.training <-predict(iq_Model, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing <-predict(iq_Model, iq_TestingSet) # Apply model to make prediction on Testing set
+
+# Model performance (Displays confusion matrix and statistics)
+iq_Model.training.confusion <-confusionMatrix(iq_Model.training, iq_TrainingSet$Outbreak,positive = "Yes" )
+iq_Model.testing.confusion <-confusionMatrix(iq_Model.testing, iq_TestingSet$Outbreak,positive = "Yes" )
+
+
+print(iq_Model.training.confusion)
+print(iq_Model.testing.confusion)
+
+iq_Model.train.acc <- iq_Model.training.confusion$overall['Accuracy']
+iq_Model.train.sens <- iq_Model.training.confusion$byClass['Sensitivity']
+iq_Model.train.spec <- iq_Model.training.confusion$byClass['Specificity']
+iq_Model.test.acc <- iq_Model.testing.confusion$overall['Accuracy']
+iq_Model.test.sens <- iq_Model.testing.confusion$byClass['Sensitivity']
+iq_Model.test.spec <- iq_Model.testing.confusion$byClass['Specificity']
+
+```
+
+```{r}
+###############################
+# SVM model (polynomial kernel) for San Juan
+
+# Build Training model
+sj_TrainingSet$Outbreak<- factor(sj_TrainingSet$Outbreak)  ### must do this to prevent error
+sj_TestingSet$Outbreak<- factor(sj_TestingSet$Outbreak)
+
+
+# Build SVM model
+sj_Model <- train(Outbreak ~ ., data = sj_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+
+
+# Apply model for prediction
+sj_Model.training <-predict(sj_Model, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing <-predict(sj_Model, sj_TestingSet) # Apply model to make prediction on Testing set
+
+
+# Model performance (Displays confusion matrix and statistics)
+sj_Model.training.confusion <-confusionMatrix(sj_Model.training, sj_TrainingSet$Outbreak,,positive = "Yes")
+sj_Model.testing.confusion <-confusionMatrix(sj_Model.testing, sj_TestingSet$Outbreak,,positive = "Yes")
+
+print(sj_Model.training.confusion)
+print(sj_Model.testing.confusion)
+
+sj_Model.train.acc <- sj_Model.training.confusion$overall['Accuracy']
+sj_Model.train.sens <- sj_Model.training.confusion$byClass['Sensitivity']
+sj_Model.train.spec <- sj_Model.training.confusion$byClass['Specificity']
+sj_Model.test.acc <- sj_Model.testing.confusion$overall['Accuracy']
+sj_Model.test.sens <- sj_Model.testing.confusion$byClass['Sensitivity']
+sj_Model.test.spec <- sj_Model.testing.confusion$byClass['Specificity']
+
+
+```
+
+
+```{r}
+###############################
+# Random forest model for Iquitos
+
+
+
+# Build CV model
+mtry <- sqrt(ncol(iq_TrainingSet))
+iq_Model.rf <- train(Outbreak ~ ., data = iq_TrainingSet,
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneGrid=expand.grid(.mtry=mtry), 
+                    trControl=trainControl(method='repeatedcv',number=10,repeats=3)
+)
+
+print(iq_Model.rf)
+
+
+# Apply model for prediction
+iq_Model.training.rf <-predict(iq_Model.rf, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing.rf <-predict(iq_Model.rf, iq_TestingSet) # Apply model to make prediction on Testing set
+
+# Model performance (Displays confusion matrix and statistics)
+iq_Model.training.confusion.rf <-confusionMatrix(iq_Model.training.rf, iq_TrainingSet$Outbreak,positive = "Yes")
+iq_Model.testing.confusion.rf <-confusionMatrix(iq_Model.testing.rf, iq_TestingSet$Outbreak,positive = "Yes")
+
+
+print(iq_Model.training.confusion.rf)
+print(iq_Model.testing.confusion.rf)
+
+
+iq_Model.train.acc.rf <- iq_Model.training.confusion.rf$overall['Accuracy']
+iq_Model.train.sens.rf <- iq_Model.training.confusion.rf$byClass['Sensitivity']
+iq_Model.train.spec.rf <- iq_Model.training.confusion.rf$byClass['Specificity']
+iq_Model.test.acc.rf <- iq_Model.testing.confusion.rf$overall['Accuracy']
+iq_Model.test.sens.rf <- iq_Model.testing.confusion.rf$byClass['Sensitivity']
+iq_Model.test.spec.rf <- iq_Model.testing.confusion.rf$byClass['Specificity']
+
+```
+
+```{r}
+###############################
+# Random forest model for for San Juan
+
+
+# Build CV model
+mtry <- sqrt(ncol(iq_TrainingSet))
+
+mtry <- sqrt(ncol(sj_TrainingSet))
+sj_Model.rf <- train(Outbreak ~ ., data = sj_TrainingSet,
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneGrid=expand.grid(.mtry=mtry), 
+                    trControl=trainControl(method='repeatedcv',number=10,repeats=3)
+)
+
+print(sj_Model.rf)
+
+# Apply model for prediction
+sj_Model.training.rf <-predict(sj_Model.rf, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing.rf <-predict(sj_Model.rf, sj_TestingSet) # Apply model to make prediction on Testing set
+
+# Model performance (Displays confusion matrix and statistics)
+sj_Model.training.confusion.rf <-confusionMatrix(sj_Model.training.rf, sj_TrainingSet$Outbreak,positive = "Yes")
+sj_Model.testing.confusion.rf <-confusionMatrix(sj_Model.testing.rf, sj_TestingSet$Outbreak,positive = "Yes")
+
+
+print(sj_Model.training.confusion.rf)
+print(sj_Model.testing.confusion.rf)
+
+
+sj_Model.train.acc.rf <- sj_Model.training.confusion.rf$overall['Accuracy']
+sj_Model.train.sens.rf <- sj_Model.training.confusion.rf$byClass['Sensitivity']
+sj_Model.train.spec.rf <- sj_Model.training.confusion.rf$byClass['Specificity']
+sj_Model.test.acc.rf <- sj_Model.testing.confusion.rf$overall['Accuracy']
+sj_Model.test.sens.rf <- sj_Model.testing.confusion.rf$byClass['Sensitivity']
+sj_Model.test.spec.rf <- sj_Model.testing.confusion.rf$byClass['Specificity']
+```
+
+```{r}
+acc_tbl<-tibble(Model='SVM Poly',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc,iq_Model.test.acc,sj_Model.train.acc,sj_Model.test.acc),
+                Sensitivity = c(iq_Model.train.sens,iq_Model.test.sens,sj_Model.train.sens,sj_Model.test.sens),
+                Specificity = c(iq_Model.train.spec,iq_Model.test.spec,sj_Model.train.spec,sj_Model.test.spec))
+
+acc_tbl
+# acc_tbl %>% arrange(Accuracy)
+```
+
+```{r}
+acc_tbl.rf<-tibble(Model='Random Forest',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc.rf,iq_Model.test.acc.rf,sj_Model.train.acc.rf,sj_Model.test.acc.rf),
+                Sensitivity = c(iq_Model.train.sens.rf,iq_Model.test.sens.rf,sj_Model.train.sens.rf,sj_Model.test.sens.rf),
+                Specificity = c(iq_Model.train.spec.rf,iq_Model.test.spec.rf,sj_Model.train.spec.rf,sj_Model.test.spec.rf))
+acc_tbl.rf
+
+
+# acc_tbl %>% arrange(Accuracy)
+```
+
+By comparing the accuracy,  Sensitivity and Specificity of the model, the Random Forest model is chosen as it results in a better prediction.
+
+```{r}
+# Feature importance
+Importance <- varImp(iq_Model.rf,scale=FALSE)
+plot(Importance)
+
+```
+
+
+```{r}
+# Feature importance
+Importance <- varImp(sj_Model.rf,scale=FALSE)
+plot(Importance)
+
+```

@@ -1,0 +1,373 @@
+---
+title: "Dengue_Data_Preprocess"
+author: "Lee Ming Xiang"
+date: '2022-04-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Part 1: Introduction
+1.1 Introduction of Dengue Fever
+
+Dengue fever is a mosquito-borne disease that occurs in tropical and sub-tropical parts of the world. In mild cases, symptoms are similar to the flu: fever, rash, and muscle and joint pain. In severe cases, dengue fever can cause severe bleeding, low blood pressure, and even death.
+
+Because it is carried by mosquitoes, the transmission dynamics of dengue are related to climate variables such as temperature and precipitation. Although the relationship to climate is complex, a growing number of scientists argue that climate change is likely to produce distributional shifts that will have significant public health implications worldwide.
+
+In recent years dengue fever has been spreading. Historically, the disease has been most prevalent in Southeast Asia and the Pacific islands. These days many of the nearly half billion cases per year are occurring in Latin America.
+
+Using environmental data collected by various U.S. Federal Government agencies—from the Centers for Disease Control and Prevention to the National Oceanic and Atmospheric Administration in the U.S. Department of Commerce. In this study, we will predict the number of dengue fever cases reported each week in San Juan, Puerto Rico and Iquitos, Peru, using both regression and classification techniques. 
+
+Part 2: Data Pre-processing
+
+Both train and test data was imported from the official website. The train data was merged with its label for efficient data processing. Data was studied thoroughly by understanding the data summary, data types, and data structure for both train and test data.The date type of date column was updated from string to date.Data missing value was checked, and K Nearest Neighbor(KNN) imputation was applied, partitioned by each city to fill the null values based on the sample data. The distribution of the data before and after imputation was visualized to validate the imputation results.Box plot of few input features and target features were visualized to study if there is any outlier present in the dataset. There is no outlier observed, and both train and test data were sorted and exported for further processing.
+
+The following code is demonstrating the data preprocessing as described above.
+
+```{r}
+pkgs <- c('tidyverse', 'corrplot', 'magrittr', 'zoo', 'RColorBrewer', 'gridExtra','MASS')
+invisible(lapply(pkgs, require, character.only = T))
+```
+
+## Import Data
+
+```{r import data}
+
+train_features <- read.csv('./data/dengue_features_train.csv')
+train_labels <- read.csv('./data/dengue_labels_train.csv')
+test_features <- read.csv('./data/dengue_features_test.csv')
+
+```
+
+### Read data (Train)
+```{r split into sj & iq}
+sj_train_features = train_features %>% filter(city == 'sj')
+sj_train_labels   = train_labels   %>% filter(city == 'sj')
+
+iq_train_features = train_features %>% filter(city == 'iq')
+iq_train_labels   = train_labels   %>% filter(city == 'iq')
+```
+
+```{r data shape for each city}
+cat('\nSan Juan\n',
+    '\t features: ', sj_train_features %>% ncol, 
+    '\t entries: ' , sj_train_features %>% nrow,
+    '\t labels: '  , sj_train_labels %>% nrow)
+
+cat('\nIquitos\n',
+    '\t features: ', iq_train_features %>% ncol, 
+    '\t entries: ' , iq_train_features %>% nrow,
+    '\t labels: '  , iq_train_labels %>% nrow)
+```
+```{r total_cases visualization}
+sj_train_features %>%
+  mutate(index = as.numeric(row.names(.))) %>%
+  ggplot(aes(index, ndvi_ne)) + 
+  geom_line(colour = 'dodgerblue') +
+  ggtitle("Vegetation Index over Time")
+```
+
+```{r sj missing values visualization}
+apply(sj_train_features, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+sj_train_features  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+```
+
+```{r iq missing values visualization}
+apply(iq_train_features, 2, function(x) 
+  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
+  as.data.frame() %>%
+  `names<-`('Percent of Missing Values')
+
+iq_train_features  %>%
+  summarise_all(list(~is.na(.)))%>%
+  pivot_longer(everything(),
+               names_to = "variables", values_to="missing") %>%
+  count(variables, missing) %>%
+  ggplot(aes(y=variables,x=n,fill=missing))+
+  geom_col()
+```
+
+```{r column names}
+names(train)
+```
+``` {r train data dimensions }
+dim(train) ## Data with 1456 rows,24 columns
+```
+
+```{r train data summary}
+summary(train) ## 20 years dataset
+
+```
+
+### Read data (Train_Label)
+```{r read top 20 data}
+head(train_label,20)
+```
+
+```{r read data structure for train label}
+str(train_label)
+```
+```{r read data dimensions}
+dim(train_label) # train label 1456 rows wtih 4 columns
+```
+```{r read train label summary}
+summary(train_label)
+```
+
+### Read data (Test)
+```{r read top 20 data}
+head(test,20)
+```
+
+```{r read test data structure}
+str(test)
+```
+```{r read test data dimensions}
+dim(test) ## test with 416 rows, 24 columns
+```
+
+```{r test data summary}
+summary(test)
+
+```
+
+## Data Preprocessing
+
+```{r update date column datatype}
+library(dplyr)
+library(magrittr)
+
+train <- mutate(train, week_start_date= as.Date(week_start_date, format= "%Y-%m-%d"))
+
+test <- mutate(test, week_start_date= as.Date(week_start_date, format= "%Y-%m-%d"))
+```
+
+
+```{r merge train data and their label}
+jointtrain <- merge(train, train_label, by = c('city','year','weekofyear'), all.x=TRUE)
+jointtrain
+
+```
+```{r summary for joint data}
+summary(jointtrain) ## data from year 1990 to 2010
+```
+```{r find unique values for impute prep}
+unique(jointtrain$city) ## Data from 2 city
+
+```
+
+```{r subset data for merge data validation}
+jointtrain[jointtrain$city == "sj" & jointtrain$year == 1990, ]     
+
+```
+
+```{r check amount if missing value for train data}
+sum(is.na(jointtrain)) ## 548 rows out of 1456 rows contain null values
+sum(is.na(test)) ## 119 rows out of 416 rows contain null values
+
+```
+
+
+### Impute Data (Train)
+
+```{r split data into sj}
+sj_jointtrain <- jointtrain[jointtrain$city == "sj", ]    
+sj_jointtrain
+sum(is.na(sj_jointtrain)) ## 40.6% missing values
+```
+
+```{r split data into sj}
+iq_jointtrain <- jointtrain[jointtrain$city == "iq", ] 
+iq_jointtrain
+sum(is.na(iq_jointtrain)) ## 32% missing values
+```
+
+
+```{r check column that give null values}
+colSums(is.na(sj_jointtrain))
+```
+
+```{r check columns to be imputed}
+library(VIM)
+
+nums <- unlist(lapply(sj_jointtrain, is.numeric))  
+col_num <- colnames(sj_jointtrain[,nums])
+
+options(warn=-1)
+imp_col_train <- col_num [col_num != c("year","weekofyear","total_cases")]
+imp_col_train
+```
+
+```{r kNN impute for sj train data}
+sj_1 <- kNN(sj_jointtrain,variable = c(imp_col_train))
+sj_1
+summary(sj_1)
+
+```
+
+```{r filter those logical variables}
+sj_1 <- subset(sj_1,select=city:total_cases)
+sj_1
+```
+
+
+
+```{r check distribution before and after imputation}
+library(ggplot2)
+##before
+ggplot(sj_jointtrain,aes(x=week_start_date, y=ndvi_ne
+))+geom_line()
+## after
+ggplot(sj_1,aes(x=week_start_date, y=ndvi_ne
+))+geom_line()
+
+```
+```{r kNN impute for iq train data}
+iq_1 <- kNN(iq_jointtrain,variable = c(imp_col_train))
+iq_1
+summary(iq_1)
+
+```
+
+```{r filter those logical variables for iq df}
+iq_1 <- subset(iq_1,select=city:total_cases)
+iq_1
+```
+
+```{r check distribution before and after imputation}
+library(ggplot2)
+##before
+ggplot(iq_jointtrain,aes(x=week_start_date, y=ndvi_ne
+))+geom_line()
+## after
+ggplot(iq_1,aes(x=week_start_date, y=ndvi_ne
+))+geom_line()
+
+```
+
+```{r merge impute data}
+## clean data
+concat_train <- rbind(sj_1, iq_1)
+concat_train_sorted <- concat_train[order(concat_train$city, concat_train$week_start_date),]
+concat_train_sorted
+```
+```{r export data}
+write.csv(concat_train_sorted, "C:/Users/MLee27/Documents/Data_RProject/Train_cleaned.csv", row.names=FALSE)
+```
+
+
+### Impute Data (Test)
+
+```{r check columns to be imputed}
+library(VIM)
+
+options(warn=-1)
+nums <- unlist(lapply(sj_jointtrain, is.numeric))  
+col_num <- colnames(sj_jointtrain[,nums])
+imp_col_test <- col_num[col_num != c('year','weekofyear','total_cases')]
+imp_col_test
+```
+
+```{r split data into sj}
+sj_test <- test[test$city == "sj", ]    
+sj_test
+sum(is.na(sj_test)) ## 40.6% missing values
+```
+```{r split data into iq}
+iq_test <- test[test$city == "iq", ]    
+iq_test
+sum(is.na(iq_test)) ## 40.6% missing values
+```
+
+```{r kNN impute for sj test data}
+sj_test1 <- kNN(sj_test)
+sj_test1
+summary(sj_test1)
+
+
+sj_test1 <- subset(sj_test1,select=city:station_precip_mm)
+sj_test1
+```
+```{r kNN impute for sj test data}
+iq_test1 <- kNN(iq_test)
+iq_test1
+summary(iq_test1)
+
+
+iq_test1 <- subset(iq_test1,select=city:station_precip_mm)
+iq_test1
+```
+
+
+```{r merge data}
+## clean data
+concat_test <- rbind(sj_test1, iq_test1)
+concat_test_sorted <- concat_test[order(concat_test$city, concat_test$week_start_date),]
+concat_test_sorted
+```
+
+```{r export data}
+write.csv(concat_test_sorted, "C:/Users/MLee27/Documents/Data_RProject/Test_cleaned.csv", row.names=FALSE)
+```
+
+## Check Outlier
+
+```{r look summary for concat train}
+summary(concat_train_sorted) 
+## generally the range of data make sense
+## check only column with high range distribution
+```
+
+```{r }
+# Store the graph
+box_plot <- ggplot(concat_train_sorted, aes(y = total_cases))
+# Add the geometric object box plot
+box_plot +
+    geom_boxplot() +coord_flip()+ggtitle("Overall Dengue total cases Boxplot")
+```
+
+```{r sj has more cases than iq}
+# Store the graph
+box_plot <- ggplot(concat_train_sorted, aes(x = city,y = total_cases))
+# Add the geometric object box plot
+box_plot +
+    geom_boxplot() +coord_flip()+ggtitle("Boxplot of Dengue Total Cases by City")
+```
+
+```{r}
+# Store the graph
+box_plot <- ggplot(concat_train_sorted, aes(x = city,y = reanalysis_sat_precip_amt_mm ))
+# Add the geometric object box plot
+box_plot +
+    geom_boxplot() +coord_flip()+ggtitle("Boxplot of reanalysis_sat_precip_amt_mm by City")
+```
+
+```{r}
+# Store the graph
+box_plot <- ggplot(concat_train_sorted, aes(x = city,y = reanalysis_precip_amt_kg_per_m2 ))
+# Add the geometric object box plot
+box_plot +
+    geom_boxplot() +coord_flip()+ggtitle("Boxplot of reanalysis_precip_amt_kg_per_m2  by City")
+
+## seesms outlier for this columns
+```
+```{r}
+# Store the graph
+box_plot <- ggplot(concat_train_sorted, aes(x = city,y = station_precip_mm))
+# Add the geometric object box plot
+box_plot +
+    geom_boxplot() +coord_flip()+ggtitle("Boxplot of Dengue station_precip_mm  by City")
+```
+
