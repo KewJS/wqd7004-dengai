@@ -1,0 +1,236 @@
+---
+title: "Regression dengue"
+author: "Afira"
+date: "5/31/2022"
+output: html_document
+---
+
+
+```{r read data}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caTools)
+library(e1071)
+library(caret)
+
+train <- Train_cleaned
+```
+
+```{r split according to city}
+iq<- train[which(train$city=="iq"),]
+sj<- train[which(train$city=="sj"),]
+```
+
+Delete the unrelated variable for prediction for both data of each city.
+```{r iq}
+iq<-iq[-c(1:6),]
+iq<-subset(iq,select = -c(1,2,3,4))
+glimpse(iq)
+
+```
+
+```{r sj}
+sj<-sj[-c(1:6),]
+sj<-subset(sj,select = -c(1,2,3,4))
+glimpse(sj)
+
+```
+
+```{r iq split data}
+set.seed(101)
+for_splitting <- sample.split (Y = iq$total_cases, SplitRatio = 0.7)
+iq_train <- subset(iq, for_splitting == TRUE)
+iq_test <- subset(iq, for_splitting == FALSE)
+```
+
+```{r iq sanity check}
+nrow(iq_train)+nrow(iq_test) == nrow(iq)
+```
+
+```{r sj split data}
+set.seed(101)
+for_splitting <- sample.split (Y = sj$total_cases, SplitRatio = 0.7)
+sj_train <- subset(sj, for_splitting == TRUE)
+sj_test <- subset(sj, for_splitting == FALSE)
+```
+
+```{r sj sanity check}
+nrow(sj_train)+nrow(sj_test) == nrow(sj)
+```
+# IQ regression model
+
+```{r iq linear model}
+# Do linear regression model using train data
+iq_lm <- lm(total_cases~., data = iq_train)
+summary(iq_lm)
+
+# Do prediction using linear regression model 
+iq_predict <- predict(iq_lm, newdata = iq_test )
+```
+
+```{r iq lm performance check}
+
+mse = mean((iq_test$total_cases - iq_predict)^2)
+mae = caret::MAE(iq_test$total_cases, iq_predict)
+rmse = caret::RMSE(iq_test$total_cases, iq_predict)
+SSE <- sum((iq_test$total_cases - iq_predict)**2)
+SSR <- sum((iq_predict - mean(iq_test$total_cases)) ** 2)
+R2 <- 1 - SSE/(SSE + SSR)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse, "R2", R2)
+
+```
+
+```{r iq backward stepwise model }
+# Do backward stepwise model
+backward_iq <- step (iq_lm, direction = 'backward')
+summary (backward_iq)
+
+# Prediction using backward stepwise model
+predict_iqbsm <- predict(backward_iq, newdata = iq_test)
+```
+
+```{r iq bm performance check}
+
+bm_mse = mean((iq_test$total_cases - predict_iqbsm)^2)
+bm_mae = caret::MAE(iq_test$total_cases, predict_iqbsm)
+bm_rmse = caret::RMSE(iq_test$total_cases, predict_iqbsm)
+bm_SSE <- sum((iq_test$total_cases - predict_iqbsm)**2)
+bm_SSR <- sum((predict_iqbsm - mean(iq_test$total_cases)) ** 2)
+bm_R2 <- 1 - bm_SSE/(bm_SSE + bm_SSR)
+
+cat("MSE: ", bm_mse, "MAE: ", bm_mae, " RMSE: ", bm_rmse, "R2", bm_R2)
+```
+
+```{r iq svr }
+
+# svr model
+svr_iq <-svm(formula  = total_cases ~., data = iq_train, type = "eps-regression")
+summary(svr_iq)
+
+# predicting using svr model
+predict_svr = predict(svr_iq, data = iq_test)
+```
+```{r iq svr plot}
+plot(svr_iq)
+plot(iq_test$total_cases,type = 'l',ylab ="Total Cases",pch = 4, col = "blue")
+lines(predict_svr,col ="red")
+legend("topright", legend=c("Train data", "Predicted data"),
+       col=c("blue", "red"), lty=1:2, cex=0.8)
+```
+
+
+```{r svr model performance  check}
+
+svr_mse = mean((iq_test$total_cases - predict_svr)^2)
+svr_mae = caret::MAE(iq_test$total_cases, predict_svr)
+svr_rmse = caret::RMSE(iq_test$total_cases, predict_svr)
+svr_SSE <- sum((iq_test$total_cases - predict_svr)**2)
+svr_SSR <- sum((predict_svr - mean(iq_test$total_cases)) ** 2)
+svr_R2 <- 1 - svr_SSE/(svr_SSE + svr_SSR)
+
+cat("MSE: ", svr_mse, "MAE: ", svr_mae, " RMSE: ", svr_rmse, "R2", svr_R2)
+
+```
+
+```{r iq comparison vals}
+
+vals <- matrix(c(mse, bm_mse, svr_mse, mae,bm_mae,svr_mae, rmse, bm_rmse,svr_rmse, R2, bm_R2, svr_R2),ncol=3,nrow = 4,byrow=TRUE)
+colnames(vals) <- c("Linear regress  ","Backward Stepwise model", "SVR model")
+rownames(vals) <- c("MSE","MAE","RMSE","R2")
+as.table(vals)
+```
+
+# SJ regression model
+
+```{r sj linear model}
+# Do linear regression model using train data
+sj_lm <- lm(total_cases~., data = sj_train)
+summary(sj_lm)
+
+# Do prediction using linear regression model 
+sj_predict <- predict(sj_lm, newdata = sj_test )
+```
+
+```{r sj lm performance  check}
+
+mse1 = mean((sj_test$total_cases - sj_predict)^2)
+mae1 = caret::MAE(sj_test$total_cases, sj_predict)
+rmse1 = caret::RMSE(sj_test$total_cases, sj_predict)
+SSE1 <- sum((sj_test$total_cases - sj_predict)**2)
+SSR1 <- sum((sj_predict - mean(sj_test$total_cases)) ** 2)
+R2_1 <- 1 - SSE1/(SSE1 + SSR1)
+
+cat("MSE: ", mse1, "MAE: ", mae1, " RMSE: ", rmse1, "R2", R2_1)
+
+```
+
+```{r sj backward stepwise model }
+# Do backward stepwise model
+backward_sj <- step (sj_lm, direction = 'backward')
+summary (backward_sj)
+
+# Prediction using backward stepwise model
+predict_sjbsm <- predict(backward_sj, newdata = sj_test)
+```
+
+```{r sj bm performance check}
+
+bm_mse1 = mean((sj_test$total_cases - predict_sjbsm)^2)
+bm_mae1 = caret::MAE(sj_test$total_cases, predict_sjbsm)
+bm_rmse1 = caret::RMSE(sj_test$total_cases, predict_sjbsm)
+bm_SSE1 <- sum((sj_test$total_cases - predict_sjbsm)**2)
+bm_SSR1 <- sum((predict_sjbsm - mean(sj_test$total_cases)) ** 2)
+bm_R2_1 <- 1 - bm_SSE1/(bm_SSE1 + bm_SSR1)
+
+cat("MSE: ", bm_mse1, "MAE: ", bm_mae1, " RMSE: ", bm_rmse1, "R2", bm_R2_1)
+```
+
+```{r sj svr }
+
+# svr model
+svr_sj <-svm(formula  = total_cases ~., data = sj_train, type = "eps-regression")
+summary(svr_sj)
+
+# predicting using svr model
+predict_sjsvr = predict(svr_sj, data = sj_test)
+```
+
+
+```{r sj svr plot}
+plot(svr_sj)
+plot(sj_test$total_cases,type = 'l',ylab ="Total Cases",pch = 4, col = "blue")
+lines(predict_sjsvr,col ="red")
+legend("topright", legend=c("Train data", "Predicted data"),
+       col=c("blue", "red"), lty=1:2, cex=0.8)
+```
+
+```{r sj svr model performance check}
+
+svr_mse1 = mean((sj_test$total_cases - predict_sjsvr)^2)
+svr_mae1 = caret::MAE(sj_test$total_cases, predict_sjsvr)
+svr_rmse1 = caret::RMSE(sj_test$total_cases, predict_sjsvr)
+svr_SSE1 <- sum((sj_test$total_cases - predict_sjsvr)**2)
+svr_SSR1 <- sum((predict_sjsvr - mean(iq_test$total_cases)) ** 2)
+svr_R2_1 <- 1 - svr_SSE1/(svr_SSE1 + svr_SSR)
+options(scipen = 0)
+
+cat("MSE: ", svr_mse1, "MAE: ", svr_mae1, " RMSE: ", svr_rmse1, "R2", svr_R2_1)
+
+```
+
+```{r sj comparison vals}
+
+vals1 <- matrix(c(mse1, bm_mse1, svr_mse1, mae1,bm_mae1,svr_mae1, rmse1, bm_rmse1,svr_rmse1, R2_1, bm_R2_1, svr_R2_1),ncol=3,nrow = 4,byrow=TRUE)
+options (scipen = 0)
+colnames(vals1) <- c("Linear regress  ","Backward Stepwise model", "SVR model")
+rownames(vals1) <- c("MSE_sj","MAE_sj","RMSE_sj","R2_sj")
+as.table(vals1)
+```
+
+```{r Conclusion}
+
+### The results for three regression model show similar result, however, we will compare based on RMSE and R2 value. For RMSE, the lower value, the higher accuracy, meanwhile, for R2, higher value is desirable as it shows the variability in dependent variable. Thus, between these three regression models, we choose Linear Model for our study.
+
+```
