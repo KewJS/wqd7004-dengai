@@ -1,0 +1,498 @@
+---
+title: "Classification Dengue Outbreak"
+output: html_document
+date: '2022-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caret)
+library(tidyverse)
+library(randomForest)
+library(mlbench)
+library(e1071)
+library(RCurl)
+
+```
+# Classification of Dengue Outbreak
+The aims of this section is to predict the occurrence of dengue outbreak by using classification models of support-vector machines (SVM) model with polynomial kernel function and random forest model.According to the WHO, a dengue outbreak is a period of time in which a reported case of a week is more than the sum of the moving average of three 4-week dengue cases plus the value of two standard deviations above the number of dengue cases for the cases four weeks prior. 
+
+## Dengue Outbreak Variable Calculation
+The target variable (outbreak) indicates whether there was a dengue outbreak in a particular week-of-the-year in each city.   The dengue outbreak variable (Yes = Dengue Outbreak, No= No dengue outbreak) was created based on the original variable of reported number of dengue cases.To compute the outbreak variable few steps of calculation have to be made. First, the average number of dengue cases during the previous four weeks is computed. Second, the value for the two-standard deviations for four average number of dengue case the previously calculated is determined . The moving average of three 4 week mean dengue cases is then computed. Fourth, the sum of the moving averages of the three, four-week dengue cases plus the two standard deviations of dengue cases for the previous four weeks is computed . Finally, if the weekly instances exceed 2 cases of dengue and  the figure calculated in step 4, an epidemic has most likely occurred.After calculation, the new dataset is shown as below.
+```{r}
+df <- read.csv("https://github.com/KewJS/wqd7004-dengai/raw/main/data/Train_cleaned_Outbreak_.csv") 
+glimpse(df)
+
+```
+
+## Data Preprocessing Before Applying Model
+
+Before applying the data into model for prediction, the data is preprocessed by spliting the deleted unrelated variables and splitting the data according to the city.
+
+1. Delete the Variable used to determine the occurrence of outbreak.
+```{r}
+df = subset(df, select = -c(`X4wkly.average`,`X2SD.4wkly.Avg`,`Avg.of.3.4wkly.mean`,`Avg.of.3.4wkly.mean.2sd.of.4wkly.mean`) )
+```
+
+
+2. Split the data according to the city
+```{r}
+iq_df<- df[which(df$city=="iq"),]
+sj_df<- df[which(df$city=="sj"),]
+```
+
+
+3. Delete the unrelated variable for prediction for both data of each city.
+```{r}
+iq_df<-iq_df[-c(1:6),]
+iq_df<-subset(iq_df,select = -c(1,2,3,4))
+glimpse(iq_df)
+sj_df<-sj_df[-c(1:6),]
+sj_df<-subset(sj_df,select = -c(1,2,3,4))
+glimpse(sj_df)
+```
+
+```{r}
+table(iq_df$Outbreak)
+table(sj_df$Outbreak)
+```
+
+## Simple Random Under Sampling
+We found out that there is an obvious  imbalance in the Dengue Outbreak variable. For Iquitos city, there is only 135 cases(26.26%) for Outbreak== "Yes" occurs out of total 514 cases. For San Juan city,there is only 254 cases(27.31%) for Outbreak== "Yes" occurs out of total 930 cases.The imbalance will cause the performance of the classifiers to be biased toward the majority (Outbreak = No) samples and cause low sensitivity. The re sampling will results is reducing amount of data to be trained, which may lower the model's accuracy however, in this scenario, high sensitivity of predicting of true occurrence of Outbreak is crucial. Hence, we performed simple random under sampling to obtain new data with balanced number of "Yes" and "No" in the Outbreak variable.
+
+```{r}
+
+## rows that have "Yes" and "No" entries
+iq_Yes <- which(iq_df$Outbreak == "Yes")
+iq_No <- which(iq_df$Outbreak == "No")
+
+
+nsamp <- length(iq_Yes)
+
+set.seed(100)
+
+# a random sample of "No" is picked based on the number of "Yes" in the Outbreak variable.
+pick_iq_No<-sample(iq_No, nsamp)
+iq_df <- iq_df[c(pick_iq_No,iq_Yes), ]
+
+# Final balanced data
+table(iq_df$Outbreak)
+```
+```{r}
+
+## rows that have "Yes" and "No" entries
+sj_Yes <- which(sj_df$Outbreak == "Yes")
+sj_No <- which(sj_df$Outbreak == "No")
+
+
+nsamp <- length(sj_Yes)
+set.seed(100)
+
+# a random sample of "No" is picked based on the number of "Yes" in the Outbreak variable.
+pick_sj_No<-sample(sj_No, nsamp)
+sj_df <- sj_df[c(pick_sj_No,sj_Yes), ]
+
+# Final balanced data
+table(sj_df$Outbreak)
+```
+
+## Splitting data to train and test split
+
+The data set for each city is split according to 80% training set and 20% testing set to apply for the models for predicting.
+```{r}
+# To achieve reproducible model; set the random seed number
+set.seed(100)
+
+# Performs stratified random split of the data set
+iq_TrainingIndex <- createDataPartition(iq_df$Outbreak, p=0.8, list = FALSE)
+iq_TrainingSet <- iq_df[iq_TrainingIndex,] # Training Set
+iq_TestingSet <- iq_df[-iq_TrainingIndex,] # Test Set
+
+sj_TrainingIndex <- createDataPartition(sj_df$Outbreak, p=0.8, list = FALSE)
+sj_TrainingSet <- sj_df[sj_TrainingIndex,] # Training Set
+sj_TestingSet <- sj_df[-sj_TrainingIndex,] # Test Set
+ 
+```
+
+
+## SVM model with polynomial kernel function
+support-vector machines (SVM) model with polynomial kernel function with 10 fold cross validation is build to make prediction of dengue outbreak on the training and testing set of both Iquitos and San Juan city.
+```{r}
+###############################
+# SVM model (polynomial kernel)for Iquitos
+
+
+iq_TrainingSet$Outbreak<- factor(iq_TrainingSet$Outbreak)  ### must do this to prevent error
+iq_TestingSet$Outbreak<- factor(iq_TestingSet$Outbreak)
+
+
+# Build CV model
+iq_Model <- train(Outbreak ~ ., data = iq_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+iq_Model
+
+
+# Apply model for prediction
+iq_Model.training <-predict(iq_Model, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing <-predict(iq_Model, iq_TestingSet) # Apply model to make prediction on Testing set
+
+
+```
+
+
+
+```{r}
+###############################
+# SVM model (polynomial kernel) for San Juan
+
+# Build Training model
+sj_TrainingSet$Outbreak<- factor(sj_TrainingSet$Outbreak)  ### must do this to prevent error
+sj_TestingSet$Outbreak<- factor(sj_TestingSet$Outbreak)
+
+
+# Build SVM model
+sj_Model <- train(Outbreak ~ ., data = sj_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+
+
+
+# Apply model for prediction
+sj_Model.training <-predict(sj_Model, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing <-predict(sj_Model, sj_TestingSet) # Apply model to make prediction on Testing set
+
+```
+## Random Forest Model 
+Random forest classification model with 10 fold cross validation is build to make prediction of dengue outbreak on the training and testing set of both Iquitos and San Juan city.
+
+```{r}
+###############################
+# Random forest model for Iquitos
+
+# Build CV model
+mtry <- sqrt(ncol(iq_TrainingSet))
+iq_Model.rf <- train(Outbreak ~ ., data = iq_TrainingSet,
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneGrid=expand.grid(.mtry=mtry), 
+                    trControl=trainControl(method='repeatedcv',number=10,repeats=3)
+)
+
+
+print(iq_Model.rf)
+
+# Apply model for prediction
+iq_Model.training.rf <-predict(iq_Model.rf, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing.rf <-predict(iq_Model.rf, iq_TestingSet) # Apply model to make prediction on Testing set
+
+```
+
+```{r}
+###############################
+# Random forest model for for San Juan
+
+
+# Build CV model
+
+mtry <- sqrt(ncol(sj_TrainingSet))
+sj_Model.rf <- train(Outbreak ~ ., data = sj_TrainingSet,
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneGrid=expand.grid(.mtry=mtry), 
+                    trControl=trainControl(method='repeatedcv',number=10,repeats=3)
+)
+
+print(sj_Model.rf)
+
+# Apply model for prediction
+sj_Model.training.rf <-predict(sj_Model.rf, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing.rf <-predict(sj_Model.rf, sj_TestingSet) # Apply model to make prediction on Testing set
+
+
+
+```
+
+## Model Evaluation
+### Support Vector Machines with Polynomial Kernel 
+```{r}
+# Model performance for Iquitos (Displays confusion matrix and statistics)
+iq_Model.training.confusion <-confusionMatrix(iq_Model.training, iq_TrainingSet$Outbreak,positive = "Yes" )
+iq_Model.testing.confusion <-confusionMatrix(iq_Model.testing, iq_TestingSet$Outbreak,positive = "Yes" )
+
+# Training set
+iq_Model.train.mat <- iq_Model.training.confusion$table
+iq_Model.train.acc <- iq_Model.training.confusion$overall['Accuracy']
+iq_Model.train.sens <- iq_Model.training.confusion$byClass['Sensitivity']
+iq_Model.train.spec <- iq_Model.training.confusion$byClass['Specificity']
+
+# Testing set
+iq_Model.test.mat <- iq_Model.testing.confusion$table
+iq_Model.test.acc <- iq_Model.testing.confusion$overall['Accuracy']
+iq_Model.test.sens <- iq_Model.testing.confusion$byClass['Sensitivity']
+iq_Model.test.spec <- iq_Model.testing.confusion$byClass['Specificity']
+
+# Model performance for San Juan (Displays confusion matrix and statistics)
+sj_Model.training.confusion <-confusionMatrix(sj_Model.training, sj_TrainingSet$Outbreak,,positive = "Yes")
+sj_Model.testing.confusion <-confusionMatrix(sj_Model.testing, sj_TestingSet$Outbreak,,positive = "Yes")
+
+# Training set
+sj_Model.train.mat <- sj_Model.training.confusion$table
+sj_Model.train.acc <- sj_Model.training.confusion$overall['Accuracy']
+sj_Model.train.sens <- sj_Model.training.confusion$byClass['Sensitivity']
+sj_Model.train.spec <- sj_Model.training.confusion$byClass['Specificity']
+
+# Testing set
+sj_Model.test.mat <- sj_Model.testing.confusion$table
+sj_Model.test.acc <- sj_Model.testing.confusion$overall['Accuracy']
+sj_Model.test.sens <- sj_Model.testing.confusion$byClass['Sensitivity']
+sj_Model.test.spec <- sj_Model.testing.confusion$byClass['Specificity']
+
+```
+## Confusion matrix
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.mat
+```
+The confusion matrix shows 77+69 = 146 correct predictions and 25+17= 42 incorrect ones.
+
+True Positives: 69
+True Negatives: 77
+False Positives: 25 (Type I error)
+False Negatives: 17( Type II error)
+
+```{r}
+# Testing set
+iq_Model.test.mat
+```
+The confusion matrix shows 16+14 = 30 correct predictions and 9+7= 16 incorrect ones.
+
+True Positives: 14
+True Negatives: 16
+False Positives: 9 (Type I error)
+False Negatives: 7 ( Type II error)
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.mat
+```
+The confusion matrix shows 107+155 = 262 correct predictions and 49+97= 146 incorrect ones.
+
+True Positives: 155
+True Negatives: 107
+False Positives: 49 (Type I error)
+False Negatives: 97 ( Type II error)
+
+```{r}
+# Testing set
+sj_Model.test.mat
+```
+The confusion matrix shows 39+29 = 68 correct predictions and 11+21= 32 incorrect ones.
+
+True Positives: 39
+True Negatives: 29
+False Positives: 11 (Type I error)
+False Negatives: 21 ( Type II error)
+
+
+## Model Evaluation - Statistics
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.acc <- iq_Model.training.confusion$overall['Accuracy']
+iq_Model.train.sens <- iq_Model.training.confusion$byClass['Sensitivity']
+iq_Model.train.spec <- iq_Model.training.confusion$byClass['Specificity']
+
+
+# Testing set
+iq_Model.test.acc <- iq_Model.testing.confusion$overall['Accuracy']
+iq_Model.test.sens <- iq_Model.testing.confusion$byClass['Sensitivity']
+iq_Model.test.spec <- iq_Model.testing.confusion$byClass['Specificity']
+
+```
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.acc <- sj_Model.training.confusion$overall['Accuracy']
+sj_Model.train.sens <- sj_Model.training.confusion$byClass['Sensitivity']
+sj_Model.train.spec <- sj_Model.training.confusion$byClass['Specificity']
+
+
+#Testing Set
+sj_Model.test.acc <- sj_Model.testing.confusion$overall['Accuracy']
+sj_Model.test.sens <- sj_Model.testing.confusion$byClass['Sensitivity']
+sj_Model.test.spec <- sj_Model.testing.confusion$byClass['Specificity']
+
+```
+
+### Summary of the Statistic of SVM poly Model
+
+```{r}
+acc_tbl<-tibble(Model='SVM Poly',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc,iq_Model.test.acc,sj_Model.train.acc,sj_Model.test.acc),
+                Sensitivity = c(iq_Model.train.sens,iq_Model.test.sens,sj_Model.train.sens,sj_Model.test.sens),
+                Specificity = c(iq_Model.train.spec,iq_Model.test.spec,sj_Model.train.spec,sj_Model.test.spec))
+
+
+acc_tbl
+```
+
+
+## Random Forest
+```{r}
+# Model performance (Displays confusion matrix and statistics)
+iq_Model.training.confusion.rf <-confusionMatrix(iq_Model.training.rf, iq_TrainingSet$Outbreak,positive = "Yes")
+iq_Model.testing.confusion.rf <-confusionMatrix(iq_Model.testing.rf, iq_TestingSet$Outbreak,positive = "Yes")
+
+
+# Training set
+iq_Model.train.mat.rf <- iq_Model.training.confusion.rf$table
+iq_Model.train.acc.rf <- iq_Model.training.confusion.rf$overall['Accuracy']
+iq_Model.train.sens.rf <- iq_Model.training.confusion.rf$byClass['Sensitivity']
+iq_Model.train.spec.rf <- iq_Model.training.confusion.rf$byClass['Specificity']
+
+# Testing set
+iq_Model.test.mat.rf <- iq_Model.testing.confusion.rf$table
+iq_Model.test.acc.rf <- iq_Model.testing.confusion.rf$overall['Accuracy']
+iq_Model.test.sens.rf <- iq_Model.testing.confusion.rf$byClass['Sensitivity']
+iq_Model.test.spec.rf <- iq_Model.testing.confusion.rf$byClass['Specificity']
+
+# Model performance for San Juan (Displays confusion matrix and statistics)
+sj_Model.training.confusion.rf <-confusionMatrix(sj_Model.training.rf, sj_TrainingSet$Outbreak,,positive = "Yes")
+sj_Model.testing.confusion.rf <-confusionMatrix(sj_Model.testing.rf, sj_TestingSet$Outbreak,,positive = "Yes")
+
+# Training set
+sj_Model.train.mat.rf <- sj_Model.training.confusion.rf$table
+sj_Model.train.acc.rf <- sj_Model.training.confusion.rf$overall['Accuracy']
+sj_Model.train.sens.rf <- sj_Model.training.confusion.rf$byClass['Sensitivity']
+sj_Model.train.spec.rf <- sj_Model.training.confusion.rf$byClass['Specificity']
+
+# Testing set
+sj_Model.test.mat.rf <- sj_Model.testing.confusion.rf$table
+sj_Model.test.acc.rf <- sj_Model.testing.confusion.rf$overall['Accuracy']
+sj_Model.test.sens.rf <- sj_Model.testing.confusion.rf$byClass['Sensitivity']
+sj_Model.test.spec.rf <- sj_Model.testing.confusion.rf$byClass['Specificity']
+
+```
+
+
+## Confusion matrix
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.mat.rf
+```
+The confusion matrix shows 94+94 = 188 correct predictions and no incorrect ones.
+
+True Positives: 94
+True Negatives: 94
+False Positives: 0 (Type I error)
+False Negatives: 0 ( Type II error)
+
+```{r}
+# Testing set
+iq_Model.test.mat.rf
+```
+The confusion matrix shows 10+20 = 30 correct predictions and 3+13= 16 incorrect ones.
+
+True Positives: 20
+True Negatives: 10
+False Positives: 3 (Type I error)
+False Negatives: 13 ( Type II error)
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.mat.rf
+```
+The confusion matrix shows 204+204 = 408 correct predictions and no incorrect ones.
+
+True Positives: 204
+True Negatives: 204
+False Positives: 0 (Type I error)
+False Negatives: 0 ( Type II error)
+
+```{r}
+# Testing set
+sj_Model.test.mat.rf
+```
+The confusion matrix shows 35+37 = 72 correct predictions and 13+15= 28 incorrect ones.
+
+True Positives: 37
+True Negatives: 35
+False Positives: 13 (Type I error)
+False Negatives: 15 ( Type II error)
+
+
+## Model Evaluation - Statistics
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.acc.rf <- iq_Model.training.confusion.rf$overall['Accuracy']
+iq_Model.train.sens.rf <- iq_Model.training.confusion.rf$byClass['Sensitivity']
+iq_Model.train.spec.rf <- iq_Model.training.confusion.rf$byClass['Specificity']
+
+
+# Testing set
+iq_Model.test.acc.rf <- iq_Model.testing.confusion.rf$overall['Accuracy']
+iq_Model.test.sens.rf <- iq_Model.testing.confusion.rf$byClass['Sensitivity']
+iq_Model.test.spec.rf <- iq_Model.testing.confusion.rf$byClass['Specificity']
+
+```
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.acc.rf <- sj_Model.training.confusion.rf$overall['Accuracy']
+sj_Model.train.sens.rf <- sj_Model.training.confusion.rf$byClass['Sensitivity']
+sj_Model.train.spec.rf <- sj_Model.training.confusion.rf$byClass['Specificity']
+
+
+#Testing Set
+sj_Model.test.acc.rf <- sj_Model.testing.confusion.rf$overall['Accuracy']
+sj_Model.test.sens.rf <- sj_Model.testing.confusion.rf$byClass['Sensitivity']
+sj_Model.test.spec.rf <- sj_Model.testing.confusion.rf$byClass['Specificity']
+```
+
+### Summary of the Statistic of SVM poly Model
+
+```{r}
+acc_tbl.rf<-tibble(Model='Random Forest',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc.rf,iq_Model.test.acc.rf,sj_Model.train.acc.rf,sj_Model.test.acc.rf),
+                Sensitivity = c(iq_Model.train.sens.rf,iq_Model.test.sens.rf,sj_Model.train.sens.rf,sj_Model.test.sens.rf),
+                Specificity = c(iq_Model.train.spec.rf,iq_Model.test.spec.rf,sj_Model.train.spec.rf,sj_Model.test.spec.rf))
+
+acc_tbl.rf
+```
+
+### Summary of Model Evaluation
+From the Statistic above we can see that the random forest model overfits since it give a much higher performance score of 100% accuracy on training data and a significant lower performance score on the test data.
+  The models were evaluated based on classification accuracy, sensitivity and specificity. Based on the results there is overfitting occurs for Random Forest model. The Random Forest model performed well with 100% accuracy in the training sample for both Iquitos and San Juan city but not for the testing sample. Only the SVM with Polynomial Kernel model performance was consistent for both training and testing samples for both city. 
+  Based on testing sample results for Iquitos city, the SVM with Polynomial Kernel model (Accuracy = 65.2%, Sensitivity = 60.8%, Specificity = 69.6%) performed poorer than Random Forest model (Accuracy = 65.2%, Sensitivity =87.0%, Specificity = 43.5%) if compared according to the performance in Sensitivity of the model. 
+  For San Juan city, the SVM Linear model (Accuracy = 68.0%, Sensitivity = 78.0%, Specificity = 58.0%) performed slightly better than Random Forest model in sensitivity (Accuracy = 72.0%, Sensitivity =74.0%, Specificity = 70.0%) however poorer in accuracy and specificity.
+  As summary, the SVM Linear model is the best prediction model to be used to predict the occurance of dengue outbreak since the model doesn't over or under fit while able to predict with better performance than Random forest model.
