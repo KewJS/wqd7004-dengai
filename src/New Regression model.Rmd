@@ -1,0 +1,143 @@
+---
+title: "regression"
+author: "Afira"
+date: "5/21/2022"
+output: html_document
+---
+
+```{r read data}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caTools)
+library(e1071)
+library(caret)
+
+train <- train <- Train_cleaned
+summary(Train_cleaned)
+```
+
+```{r remove column}
+regdata <- train %>% select(-c("year","weekofyear","week_start_date"))
+```
+
+```{r split data}
+set.seed(101)
+for_splitting <- sample.split (Y = regdata$total_cases, SplitRatio = 0.7)
+regdata_train <- subset(regdata, for_splitting == TRUE)
+regdata_test <- subset(regdata, for_splitting == FALSE)
+```
+
+```{r sanity check}
+nrow(regdata_train)+nrow(regdata_test) == nrow(regdata)
+```
+
+```{r linear model}
+# Do linear regression model using train data
+lm_train <- lm(total_cases~., data = regdata_train)
+summary(lm_train)
+
+# Do prediction using linear regression model 
+predict_case <- predict(lm_train, newdata = regdata_test )
+```
+
+```{r lm plot}
+plot(lm_train)
+plot(regdata_test$total_cases,pch = 4, col = "blue")
+points(predict_case,pch = 3, col = "red")
+```
+
+```{r lm accurancy check}
+
+mse = mean((regdata_test$total_cases - predict_case)^2)
+mae = caret::MAE(regdata_test$total_cases, predict_case)
+rmse = caret::RMSE(regdata_test$total_cases, predict_case)
+SSE <- sum((regdata_test$total_cases - predict_case)**2)
+SSR <- sum((predict_case - mean(regdata_test$total_cases)) ** 2)
+R2 <- 1 - SSE/(SSE + SSR)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse, "R2", R2)
+
+```
+
+```{r backward stepwise model }
+# Do backward stepwise model
+backward_lm <- step (lm_train, direction = 'backward')
+summary (backward_lm)
+
+# Prediction using backward stepwise model
+predict_backward <- predict(backward_lm, newdata = regdata_test)
+```
+
+```{r bm plot }
+plot(backward_lm)
+plot(regdata_test$total_cases,pch = 4, col = "blue")
+points(predict_backward,pch = 4, col = "red")
+
+```
+
+```{r bm accuracy check}
+
+bm_mse = mean((regdata_test$total_cases - predict_backward)^2)
+bm_mae = caret::MAE(regdata_test$total_cases, predict_backward)
+bm_rmse = caret::RMSE(regdata_test$total_cases, predict_backward)
+bm_SSE <- sum((regdata_test$total_cases - predict_backward)**2)
+bm_SSR <- sum((predict_backward - mean(regdata_test$total_cases)) ** 2)
+bm_R2 <- 1 - SSE/(SSE + SSR)
+
+cat("MSE: ", bm_mse, "MAE: ", bm_mae, " RMSE: ", bm_rmse, "R2", bm_R2)
+```
+
+
+```{r svr }
+
+# svr model
+svr_model <-svm(formula  = total_cases ~., data = regdata_train, type = "eps-regression")
+summary(svr_model)
+
+# predicting using svr model
+predict_svr = predict(svr_model, data = regdata_test)
+```
+
+```{r svr plot}
+plot(svr_model)
+plot(regdata_test$total_cases,pch = 4, col = "blue")
+points(predict_svr,pch = 4, col = "red")
+```
+
+```{r svr model accuracy check}
+
+svr_mse = mean((regdata_test$total_cases - predict_svr)^2)
+svr_mae = caret::MAE(regdata_test$total_cases, predict_svr)
+svr_rmse = caret::RMSE(regdata_test$total_cases, predict_svr)
+svr_SSE <- sum((regdata_test$total_cases - predict_svr)**2)
+svr_SSR <- sum((predict_svr - mean(regdata_test$total_cases)) ** 2)
+svr_R2 <- 1 - SSE/(SSE + SSR)
+
+cat("MSE: ", svr_mse, "MAE: ", svr_mae, " RMSE: ", svr_rmse, "R2", svr_R2)
+
+```
+
+```{r comparison vals}
+
+vals <- matrix(c(mse, bm_mse, svr_mse, mae,bm_mae,svr_mae, rmse, bm_rmse,svr_rmse, R2, bm_R2, svr_R2),ncol=3,nrow = 4,byrow=TRUE)
+colnames(vals) <- c("Linear regress  ","Backward Stepwise model", "SVR model")
+rownames(vals) <- c("MSE","MAE","RMSE","R2")
+as.table(vals)
+```
+
+```{r comparison plot}
+
+plot(regdata_test$total_cases,pch = 4, col = "blue")
+points(predict_case,pch = 3, col = "red")
+points(predict_backward,pch = 2, col = "green")
+points(predict_svr,pch = 1, col = "yellow")
+
+```
+
+
+```{r Conclusion}
+
+### The results for three regression model show similar result, however, we will compare based on RMSE and R2 value. For RMSE, the lower value, the higher accuracy, meanwhile, for R2, higher value is desirable as it shows the variability in dependent variable. Thus, between these three regression models, we choose Backward Stepwise Model for our study.
+
+```
