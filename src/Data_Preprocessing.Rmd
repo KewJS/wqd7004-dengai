@@ -26,77 +26,33 @@ Both train and test data was imported from the official website. The train data 
 
 The following code is demonstrating the data preprocessing as described above.
 
-```{r}
-pkgs <- c('tidyverse', 'corrplot', 'magrittr', 'zoo', 'RColorBrewer', 'gridExtra','MASS')
-invisible(lapply(pkgs, require, character.only = T))
-```
-
 ## Import Data
 
 ```{r import data}
 
-train_features <- read.csv('./data/dengue_features_train.csv')
-train_labels <- read.csv('./data/dengue_labels_train.csv')
-test_features <- read.csv('./data/dengue_features_test.csv')
+train <- read.csv('C:/Users/MLee27/Documents/Data_RProject/dengue_features_train.csv')
+train_label <- read.csv('C:/Users/MLee27/Documents/Data_RProject/dengue_labels_train.csv')
+test <- read.csv('C:/Users/MLee27/Documents/Data_RProject/dengue_features_test.csv')
 
 ```
 
 ### Read data (Train)
-```{r split into sj & iq}
-sj_train_features = train_features %>% filter(city == 'sj')
-sj_train_labels   = train_labels   %>% filter(city == 'sj')
+```{r read top 20 data}
+head(train,20)
 
-iq_train_features = train_features %>% filter(city == 'iq')
-iq_train_labels   = train_labels   %>% filter(city == 'iq')
 ```
 
-```{r data shape for each city}
-cat('\nSan Juan\n',
-    '\t features: ', sj_train_features %>% ncol, 
-    '\t entries: ' , sj_train_features %>% nrow,
-    '\t labels: '  , sj_train_labels %>% nrow)
+```{r data strucutre and dtypes}
+str(train)
 
-cat('\nIquitos\n',
-    '\t features: ', iq_train_features %>% ncol, 
-    '\t entries: ' , iq_train_features %>% nrow,
-    '\t labels: '  , iq_train_labels %>% nrow)
-```
-```{r total_cases visualization}
-sj_train_features %>%
-  mutate(index = as.numeric(row.names(.))) %>%
-  ggplot(aes(index, ndvi_ne)) + 
-  geom_line(colour = 'dodgerblue') +
-  ggtitle("Vegetation Index over Time")
 ```
 
-```{r sj missing values visualization}
-apply(sj_train_features, 2, function(x) 
-  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
-  as.data.frame() %>%
-  `names<-`('Percent of Missing Values')
-
-sj_train_features  %>%
-  summarise_all(list(~is.na(.)))%>%
-  pivot_longer(everything(),
-               names_to = "variables", values_to="missing") %>%
-  count(variables, missing) %>%
-  ggplot(aes(y=variables,x=n,fill=missing))+
-  geom_col()
+```{r data class}
+class(train)
 ```
 
-```{r iq missing values visualization}
-apply(iq_train_features, 2, function(x) 
-  round(100 * (length(which(is.na(x))))/length(x) , digits = 1)) %>%
-  as.data.frame() %>%
-  `names<-`('Percent of Missing Values')
-
-iq_train_features  %>%
-  summarise_all(list(~is.na(.)))%>%
-  pivot_longer(everything(),
-               names_to = "variables", values_to="missing") %>%
-  count(variables, missing) %>%
-  ggplot(aes(y=variables,x=n,fill=missing))+
-  geom_col()
+```{r data type}
+typeof(train)
 ```
 
 ```{r column names}
