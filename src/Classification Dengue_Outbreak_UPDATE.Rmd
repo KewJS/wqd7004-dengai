@@ -1,0 +1,501 @@
+---
+title: "Classification Dengue Outbreak"
+output: html_document
+date: '2022-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caret)
+library(tidyverse)
+library(gbm)
+library(mlbench)
+library(e1071)
+library(RCurl)
+
+```
+# Classification of Dengue Outbreak
+The aims of this section is to predict the occurrence of dengue outbreak by using classification models of support-vector machines (SVM) model with polynomial kernel function and Gradient Boosting Decision Tree model.According to the WHO, a dengue outbreak is a period of time in which a reported case of a week is more than the sum of the moving average of three 4-week dengue cases plus the value of two standard deviations above the number of dengue cases for the cases four weeks prior. 
+
+## Dengue Outbreak Variable Calculation
+The target variable (outbreak) indicates whether there was a dengue outbreak in a particular week-of-the-year in each city.   The dengue outbreak variable (Yes = Dengue Outbreak, No= No dengue outbreak) was created based on the original variable of reported number of dengue cases.To compute the outbreak variable few steps of calculation have to be made. First, the average number of dengue cases during the previous four weeks is computed. Second, the value for the two-standard deviations for four average number of dengue case the previously calculated is determined . The moving average of three 4 week mean dengue cases is then computed. Fourth, the sum of the moving averages of the three, four-week dengue cases plus the two standard deviations of dengue cases for the previous four weeks is computed . Finally, if the weekly instances exceed 2 cases of dengue and  the figure calculated in step 4, an epidemic has most likely occurred.After calculation, the new dataset is shown as below.
+```{r}
+df <- read.csv("https://github.com/KewJS/wqd7004-dengai/raw/main/data/Train_cleaned_Outbreak_.csv") 
+glimpse(df)
+
+```
+
+## Data Preprocessing Before Applying Model
+
+Before applying the data into model for prediction, the data is preprocessed by spliting the deleted unrelated variables and splitting the data according to the city.
+
+1. Delete the Variable used to determine the occurrence of outbreak.
+```{r}
+df = subset(df, select = -c(`X4wkly.average`,`X2SD.4wkly.Avg`,`Avg.of.3.4wkly.mean`,`Avg.of.3.4wkly.mean.2sd.of.4wkly.mean`) )
+```
+
+
+2. Split the data according to the city
+```{r}
+iq_df<- df[which(df$city=="iq"),]
+sj_df<- df[which(df$city=="sj"),]
+```
+
+
+3. Delete the unrelated variable for prediction for both data of each city.
+```{r}
+iq_df<-iq_df[-c(1:6),]
+iq_df<-subset(iq_df,select = -c(1,2,3,4))
+glimpse(iq_df)
+sj_df<-sj_df[-c(1:6),]
+sj_df<-subset(sj_df,select = -c(1,2,3,4))
+glimpse(sj_df)
+```
+
+```{r}
+table(iq_df$Outbreak)
+table(sj_df$Outbreak)
+```
+
+## Simple Random Under Sampling
+We found out that there is an obvious  imbalance in the Dengue Outbreak variable. For Iquitos city, there is only 135 cases(26.26%) for Outbreak== "Yes" occurs out of total 514 cases. For San Juan city,there is only 254 cases(27.31%) for Outbreak== "Yes" occurs out of total 930 cases.The imbalance will cause the performance of the classifiers to be biased toward the majority (Outbreak = No) samples and cause low sensitivity. The re sampling will results is reducing amount of data to be trained, which may lower the model's accuracy however, in this scenario, high sensitivity of predicting of true occurrence of Outbreak is crucial. Hence, we performed simple random under sampling to obtain new data with balanced number of "Yes" and "No" in the Outbreak variable.
+
+```{r}
+
+## rows that have "Yes" and "No" entries
+iq_Yes <- which(iq_df$Outbreak == "Yes")
+iq_No <- which(iq_df$Outbreak == "No")
+
+
+nsamp <- length(iq_Yes)
+
+set.seed(100)
+
+# a random sample of "No" is picked based on the number of "Yes" in the Outbreak variable.
+pick_iq_No<-sample(iq_No, nsamp)
+iq_df <- iq_df[c(pick_iq_No,iq_Yes), ]
+
+# Final balanced data
+table(iq_df$Outbreak)
+```
+```{r}
+
+## rows that have "Yes" and "No" entries
+sj_Yes <- which(sj_df$Outbreak == "Yes")
+sj_No <- which(sj_df$Outbreak == "No")
+
+
+nsamp <- length(sj_Yes)
+set.seed(100)
+
+# a random sample of "No" is picked based on the number of "Yes" in the Outbreak variable.
+pick_sj_No<-sample(sj_No, nsamp)
+sj_df <- sj_df[c(pick_sj_No,sj_Yes), ]
+
+# Final balanced data
+table(sj_df$Outbreak)
+```
+
+## Splitting data to train and test split
+
+The data set for each city is split according to 80% training set and 20% testing set to apply for the models for predicting.
+```{r}
+# To achieve reproducible model; set the random seed number
+set.seed(100)
+
+# Performs stratified random split of the data set
+iq_TrainingIndex <- createDataPartition(iq_df$Outbreak, p=0.8, list = FALSE)
+iq_TrainingSet <- iq_df[iq_TrainingIndex,] # Training Set
+iq_TestingSet <- iq_df[-iq_TrainingIndex,] # Test Set
+
+sj_TrainingIndex <- createDataPartition(sj_df$Outbreak, p=0.8, list = FALSE)
+sj_TrainingSet <- sj_df[sj_TrainingIndex,] # Training Set
+sj_TestingSet <- sj_df[-sj_TrainingIndex,] # Test Set
+ 
+```
+
+
+## SVM model with polynomial kernel function
+support-vector machines (SVM) model with polynomial kernel function with 10 fold cross validation is build to make prediction of dengue outbreak on the training and testing set of both Iquitos and San Juan city.
+```{r}
+###############################
+# SVM model (polynomial kernel)for Iquitos
+
+
+iq_TrainingSet$Outbreak<- factor(iq_TrainingSet$Outbreak)  ### must do this to prevent error
+iq_TestingSet$Outbreak<- factor(iq_TestingSet$Outbreak)
+
+
+# Build CV model
+iq_Model <- train(Outbreak ~ ., data = iq_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+iq_Model
+
+
+# Apply model for prediction
+iq_Model.training <-predict(iq_Model, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing <-predict(iq_Model, iq_TestingSet) # Apply model to make prediction on Testing set
+
+
+```
+
+
+
+```{r}
+###############################
+# SVM model (polynomial kernel) for San Juan
+
+# Build Training model
+sj_TrainingSet$Outbreak<- factor(sj_TrainingSet$Outbreak)  ### must do this to prevent error
+sj_TestingSet$Outbreak<- factor(sj_TestingSet$Outbreak)
+
+
+# Build SVM model
+sj_Model <- train(Outbreak ~ ., data = sj_TrainingSet,
+                  method = "svmPoly",
+                  na.action = na.omit,
+                  preProcess=c("scale","center"),
+                  trControl= trainControl(method="cv", number=10),
+                  tuneLength = 4
+)
+
+
+
+# Apply model for prediction
+sj_Model.training <-predict(sj_Model, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing <-predict(sj_Model, sj_TestingSet) # Apply model to make prediction on Testing set
+
+```
+## Gradient Boosting Decision Tree Model 
+Gradient Boosting Decision Tree classification model with 10 fold cross validation is build to make prediction of dengue outbreak on the training and testing set of both Iquitos and San Juan city.
+
+```{r, echo=FALSE}
+###############################
+# Gradient Boosting Decision Tree model for Iquitos
+
+# Build CV model
+
+grid<-expand.grid(.n.trees=seq(200,500,by=200),.interaction.depth=seq(1,3,by=2),.shrinkage=seq(.01,.09,by=.04),.n.minobsinnode=seq(1,5,by=2)) #grid features
+control<-trainControl(method="CV",number = 10) #control
+
+
+iq_Model.gbm <- train(Outbreak ~ ., data = iq_TrainingSet,
+                    method='gbm', 
+                    tuneGrid=grid, 
+                    trControl=control,
+                    verbose=FALSE       #verbose=FALSE to hide the interation output    
+)
+
+iq_Model.gbm
+
+# Apply model for prediction
+iq_Model.training.gbm <-predict(iq_Model.gbm, iq_TrainingSet) # Apply model to make prediction on Training set
+iq_Model.testing.gbm <-predict(iq_Model.gbm, iq_TestingSet) # Apply model to make prediction on Testing set
+
+```
+
+```{r}
+###############################
+# Gradient Boosting Decision Tree model for for San Juan
+
+
+# Build CV model
+
+grid<-expand.grid(.n.trees=seq(200,500,by=200),.interaction.depth=seq(1,3,by=2),.shrinkage=seq(.01,.09,by=.04),.n.minobsinnode=seq(1,5,by=2)) #grid features
+control<-trainControl(method="CV",number = 10) #control
+
+sj_Model.gbm <- train(Outbreak ~ ., data = sj_TrainingSet,
+                    method='gbm', 
+                    tuneGrid=grid, 
+                    trControl=control,
+                    verbose=FALSE             #verbose=FALSE to hide the iteration output
+)
+
+# Apply model for prediction
+sj_Model.training.gbm <-predict(sj_Model.gbm, sj_TrainingSet) # Apply model to make prediction on Training set
+sj_Model.testing.gbm <-predict(sj_Model.gbm, sj_TestingSet) # Apply model to make prediction on Testing set
+
+
+
+```
+
+## Model Evaluation
+### Support Vector Machines with Polynomial Kernel 
+```{r}
+# Model performance for Iquitos (Displays confusion matrix and statistics)
+iq_Model.training.confusion <-confusionMatrix(iq_Model.training, iq_TrainingSet$Outbreak,positive = "Yes" )
+iq_Model.testing.confusion <-confusionMatrix(iq_Model.testing, iq_TestingSet$Outbreak,positive = "Yes" )
+
+# Training set
+iq_Model.train.mat <- iq_Model.training.confusion$table
+iq_Model.train.acc <- iq_Model.training.confusion$overall['Accuracy']
+iq_Model.train.sens <- iq_Model.training.confusion$byClass['Sensitivity']
+iq_Model.train.spec <- iq_Model.training.confusion$byClass['Specificity']
+
+# Testing set
+iq_Model.test.mat <- iq_Model.testing.confusion$table
+iq_Model.test.acc <- iq_Model.testing.confusion$overall['Accuracy']
+iq_Model.test.sens <- iq_Model.testing.confusion$byClass['Sensitivity']
+iq_Model.test.spec <- iq_Model.testing.confusion$byClass['Specificity']
+
+# Model performance for San Juan (Displays confusion matrix and statistics)
+sj_Model.training.confusion <-confusionMatrix(sj_Model.training, sj_TrainingSet$Outbreak,,positive = "Yes")
+sj_Model.testing.confusion <-confusionMatrix(sj_Model.testing, sj_TestingSet$Outbreak,,positive = "Yes")
+
+# Training set
+sj_Model.train.mat <- sj_Model.training.confusion$table
+sj_Model.train.acc <- sj_Model.training.confusion$overall['Accuracy']
+sj_Model.train.sens <- sj_Model.training.confusion$byClass['Sensitivity']
+sj_Model.train.spec <- sj_Model.training.confusion$byClass['Specificity']
+
+# Testing set
+sj_Model.test.mat <- sj_Model.testing.confusion$table
+sj_Model.test.acc <- sj_Model.testing.confusion$overall['Accuracy']
+sj_Model.test.sens <- sj_Model.testing.confusion$byClass['Sensitivity']
+sj_Model.test.spec <- sj_Model.testing.confusion$byClass['Specificity']
+
+```
+## Confusion matrix
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.mat
+```
+The confusion matrix shows 77+69 = 146 correct predictions and 25+17= 42 incorrect ones.
+
+True Positives: 69
+True Negatives: 77
+False Positives: 25 (Type I error)
+False Negatives: 17( Type II error)
+
+```{r}
+# Testing set
+iq_Model.test.mat
+```
+The confusion matrix shows 16+14 = 30 correct predictions and 9+7= 16 incorrect ones.
+
+True Positives: 14
+True Negatives: 16
+False Positives: 9 (Type I error)
+False Negatives: 7 ( Type II error)
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.mat
+```
+The confusion matrix shows 107+155 = 262 correct predictions and 49+97= 146 incorrect ones.
+
+True Positives: 155
+True Negatives: 107
+False Positives: 49 (Type I error)
+False Negatives: 97 ( Type II error)
+
+```{r}
+# Testing set
+sj_Model.test.mat
+```
+The confusion matrix shows 39+29 = 68 correct predictions and 11+21= 32 incorrect ones.
+
+True Positives: 39
+True Negatives: 29
+False Positives: 11 (Type I error)
+False Negatives: 21 ( Type II error)
+
+
+## Model Evaluation - Statistics
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.acc <- iq_Model.training.confusion$overall['Accuracy']
+iq_Model.train.sens <- iq_Model.training.confusion$byClass['Sensitivity']
+iq_Model.train.spec <- iq_Model.training.confusion$byClass['Specificity']
+
+
+# Testing set
+iq_Model.test.acc <- iq_Model.testing.confusion$overall['Accuracy']
+iq_Model.test.sens <- iq_Model.testing.confusion$byClass['Sensitivity']
+iq_Model.test.spec <- iq_Model.testing.confusion$byClass['Specificity']
+
+```
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.acc <- sj_Model.training.confusion$overall['Accuracy']
+sj_Model.train.sens <- sj_Model.training.confusion$byClass['Sensitivity']
+sj_Model.train.spec <- sj_Model.training.confusion$byClass['Specificity']
+
+
+#Testing Set
+sj_Model.test.acc <- sj_Model.testing.confusion$overall['Accuracy']
+sj_Model.test.sens <- sj_Model.testing.confusion$byClass['Sensitivity']
+sj_Model.test.spec <- sj_Model.testing.confusion$byClass['Specificity']
+
+```
+
+### Summary of the Statistic of SVM poly Model
+
+```{r}
+acc_tbl<-tibble(Model='SVM Poly',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc,iq_Model.test.acc,sj_Model.train.acc,sj_Model.test.acc),
+                Sensitivity = c(iq_Model.train.sens,iq_Model.test.sens,sj_Model.train.sens,sj_Model.test.sens),
+                Specificity = c(iq_Model.train.spec,iq_Model.test.spec,sj_Model.train.spec,sj_Model.test.spec))
+
+
+acc_tbl
+```
+
+
+## Gradient Boosting Decision Tree
+```{r}
+# Model performance (Displays confusion matrix and statistics)
+iq_Model.training.confusion.gbm <-confusionMatrix(iq_Model.training.gbm, iq_TrainingSet$Outbreak,positive = "Yes")
+iq_Model.testing.confusion.gbm <-confusionMatrix(iq_Model.testing.gbm, iq_TestingSet$Outbreak,positive = "Yes")
+
+
+# Training set
+iq_Model.train.mat.gbm <- iq_Model.training.confusion.gbm$table
+iq_Model.train.acc.gbm <- iq_Model.training.confusion.gbm$overall['Accuracy']
+iq_Model.train.sens.gbm <- iq_Model.training.confusion.gbm$byClass['Sensitivity']
+iq_Model.train.spec.gbm <- iq_Model.training.confusion.gbm$byClass['Specificity']
+
+# Testing set
+iq_Model.test.mat.gbm <- iq_Model.testing.confusion.gbm$table
+iq_Model.test.acc.gbm <- iq_Model.testing.confusion.gbm$overall['Accuracy']
+iq_Model.test.sens.gbm <- iq_Model.testing.confusion.gbm$byClass['Sensitivity']
+iq_Model.test.spec.gbm <- iq_Model.testing.confusion.gbm$byClass['Specificity']
+
+# Model performance for San Juan (Displays confusion matrix and statistics)
+sj_Model.training.confusion.gbm <-confusionMatrix(sj_Model.training.gbm, sj_TrainingSet$Outbreak,,positive = "Yes")
+sj_Model.testing.confusion.gbm <-confusionMatrix(sj_Model.testing.gbm, sj_TestingSet$Outbreak,,positive = "Yes")
+
+# Training set
+sj_Model.train.mat.gbm <- sj_Model.training.confusion.gbm$table
+sj_Model.train.acc.gbm <- sj_Model.training.confusion.gbm$overall['Accuracy']
+sj_Model.train.sens.gbm <- sj_Model.training.confusion.gbm$byClass['Sensitivity']
+sj_Model.train.spec.gbm <- sj_Model.training.confusion.gbm$byClass['Specificity']
+
+# Testing set
+sj_Model.test.mat.gbm <- sj_Model.testing.confusion.gbm$table
+sj_Model.test.acc.gbm <- sj_Model.testing.confusion.gbm$overall['Accuracy']
+sj_Model.test.sens.gbm <- sj_Model.testing.confusion.gbm$byClass['Sensitivity']
+sj_Model.test.spec.gbm <- sj_Model.testing.confusion.gbm$byClass['Specificity']
+
+```
+
+
+## Confusion matrix
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.mat.gbm
+```
+The confusion matrix shows 94+94 = 188 correct predictions and no incorrect ones.
+
+True Positives: 89
+True Negatives: 79
+False Positives: 5 (Type I error)
+False Negatives: 15 ( Type II error)
+
+```{r}
+# Testing set
+iq_Model.test.mat.gbm
+```
+The confusion matrix shows 10+20 = 30 correct predictions and 3+13= 16 incorrect ones.
+
+True Positives: 19
+True Negatives: 13
+False Positives: 4 (Type I error)
+False Negatives: 10 ( Type II error)
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.mat.gbm
+```
+The confusion matrix shows 204+204 = 408 correct predictions and no incorrect ones.
+
+True Positives: 147
+True Negatives: 143
+False Positives: 57 (Type I error)
+False Negatives: 61 ( Type II error)
+
+```{r}
+# Testing set
+sj_Model.test.mat.gbm
+```
+The confusion matrix shows 35+37 = 72 correct predictions and 13+15= 28 incorrect ones.
+
+True Positives: 37
+True Negatives: 35
+False Positives: 15 (Type I error)
+False Negatives: 16 ( Type II error)
+
+
+## Model Evaluation - Statistics
+
+### Iquitos
+```{r}
+# Training set
+iq_Model.train.acc.gbm <- iq_Model.training.confusion.gbm$overall['Accuracy']
+iq_Model.train.sens.gbm <- iq_Model.training.confusion.gbm$byClass['Sensitivity']
+iq_Model.train.spec.gbm <- iq_Model.training.confusion.gbm$byClass['Specificity']
+
+
+# Testing set
+iq_Model.test.acc.gbm <- iq_Model.testing.confusion.gbm$overall['Accuracy']
+iq_Model.test.sens.gbm <- iq_Model.testing.confusion.gbm$byClass['Sensitivity']
+iq_Model.test.spec.gbm <- iq_Model.testing.confusion.gbm$byClass['Specificity']
+
+```
+
+### san Juan
+```{r}
+# Training set
+sj_Model.train.acc.gbm <- sj_Model.training.confusion.gbm$overall['Accuracy']
+sj_Model.train.sens.gbm <- sj_Model.training.confusion.gbm$byClass['Sensitivity']
+sj_Model.train.spec.gbm <- sj_Model.training.confusion.gbm$byClass['Specificity']
+
+
+#Testing Set
+sj_Model.test.acc.gbm <- sj_Model.testing.confusion.gbm$overall['Accuracy']
+sj_Model.test.sens.gbm <- sj_Model.testing.confusion.gbm$byClass['Sensitivity']
+sj_Model.test.spec.gbm <- sj_Model.testing.confusion.gbm$byClass['Specificity']
+```
+
+### Summary of the Statistic of SVM poly Model
+
+```{r}
+acc_tbl.gbm<-tibble(Model='Gradient Boosting Decision Tree',
+                Set= c("iq_TrainingSet", "iq_TestingSet","sj_TrainingSet", "sj_TestingSet"),                
+                Accuracy=c(iq_Model.train.acc.gbm,iq_Model.test.acc.gbm,sj_Model.train.acc.gbm,sj_Model.test.acc.gbm),
+                Sensitivity = c(iq_Model.train.sens.gbm,iq_Model.test.sens.gbm,sj_Model.train.sens.gbm,sj_Model.test.sens.gbm),
+                Specificity = c(iq_Model.train.spec.gbm,iq_Model.test.spec.gbm,sj_Model.train.spec.gbm,sj_Model.test.spec.gbm))
+
+acc_tbl.gbm
+```
+
+### Summary of Model Evaluation
+
+In prediction of dengue outbreak, high precision in predicting the true occurrence of dengue outbreak is crucial to prevent delays in critical preventive measures when there is a dengue outbreak.Hence, in evaluating the model performance, high sensitivity is the most important evaluation criteria than the accuracy and lastly the specificity of the model.From the Statistic above we can see that both the machine learning model fits wells for both city. By comparing the performance of training set between the two city, we can observe that for Iquitos city, the SVM with Polynomial Kernel model (Accuracy = 65%, Sensitivity = 61%, Specificity = 70%) performed poorer than Gradient Boosting Decision Tree model (Accuracy = 70%, Sensitivity =83.0%, Specificity = 57%) with lower sensitivity and accuracy . However,for San Juan city, the SVM with Polynomial Kernel model (Accuracy = 68%, Sensitivity = 78%, Specificity = 58%) performed  better than Gradient Boosting Decision Tree model in sensitivity (Accuracy = 69%, Sensitivity =70%, Specificity = 68%).
+
+As summary, the Gradient Boosting Decision Tree model is suitable to be employed in the Iquitos city data, while SVM with Polynomial Kernel model is more suitable for the San Juan City.
+
